@@ -1,0 +1,190 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+linters-settings:
+  gci:
+    local-prefixes: github.com/rusik69/llm
+  
+  gofmt:
+    simplify: true
+  
+  goimports:
+    local-prefixes: github.com/rusik69/llm
+  
+  golint:
+    min-confidence: 0.8
+  
+  govet:
+    check-shadowing: true
+    enable:
+      - atomicalign
+      - deepequalerrors
+      - fieldalignment
+      - findcall
+      - nilness
+      - reflectvaluecompare
+      - sortslice
+      - timeformat
+      - unusedwrite
+  
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - dupImport
+      - ifElseChain
+      - octalLiteral
+      - whyNoLint
+      - wrapperFunc
+  
+  lll:
+    line-length: 120
+  
+  misspell:
+    locale: US
+  
+  unused:
+    check-exported: false
+  
+  unparam:
+    check-exported: false
+  
+  cyclop:
+    max-complexity: 15
+    package-average: 10.0
+    skip-tests: true
+
+linters:
+  enable:
+    - bodyclose
+    - deadcode
+    - depguard
+    - dogsled
+    - dupl
+    - errcheck
+    - exportloopref
+    - exhaustive
+    - funlen
+    - gci
+    - gochecknoinits
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - godox
+    - gofmt
+    - gofumpt
+    - goheader
+    - goimports
+    - golint
+    - gomnd
+    - gomodguard
+    - goprintffuncname
+    - gosec
+    - gosimple
+    - govet
+    - ineffassign
+    - lll
+    - makezero
+    - misspell
+    - nakedret
+    - nestif
+    - noctx
+    - nolintlint
+    - prealloc
+    - predeclared
+    - revive
+    - staticcheck
+    - structcheck
+    - stylecheck
+    - thelper
+    - tparallel
+    - typecheck
+    - unconvert
+    - unparam
+    - unused
+    - varcheck
+    - whitespace
+
+  disable:
+    - asciicheck
+    - gochecknoglobals
+    - gocognit
+    - godot
+    - godox
+    - goerr113
+    - gomnd
+    - gomodguard
+    - interfacer
+    - maligned
+    - nlreturn
+    - nolintlint
+    - paralleltest
+    - scopelint
+    - testpackage
+    - wsl
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - funlen
+        - goconst
+        - gocognit
+        - scopelint
+        - lll
+    
+    # Exclude some linters from running on main.go
+    - path: main\.go
+      linters:
+        - gocyclo
+        - funlen
+    
+    # Exclude known linters from partially hard-to-fix issues
+    - linters:
+        - gocritic
+      text: "unnecessaryDefer:"
+    
+    - linters:
+        - govet
+      text: "shadow: declaration of \"err\" shadows declaration at"
+    
+    # Exclude some staticcheck messages
+    - linters:
+        - staticcheck
+      text: "SA9003:"
+    
+    # Exclude lll issues for long lines with go:generate
+    - linters:
+        - lll
+      source: "^//go:generate "
+
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+
+severity:
+  default-severity: error
+  case-sensitive: false 
