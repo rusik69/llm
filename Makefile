@@ -14,6 +14,7 @@ GO=go
 GO_BUILD=$(GO) build
 GO_TEST=$(GO) test
 GO_CLEAN=$(GO) clean
+GO_GET=$(GO) get
 GO_MOD=$(GO) mod
 
 # Default target
@@ -154,7 +155,7 @@ tidy:
 .PHONY: get
 get:
 	@echo "Getting dependencies..."
-	$(GO_MOD) download
+	$(GO_GET) ./...
 
 # Update all dependencies
 .PHONY: get-update
