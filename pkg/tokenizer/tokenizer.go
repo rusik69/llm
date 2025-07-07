@@ -196,7 +196,11 @@ func (t *Tokenizer) SaveTokenizer(modelDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create tokenizer file: %v", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Printf("Warning: failed to close tokenizer file: %v\n", err)
+		}
+	}()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
@@ -216,7 +220,11 @@ func LoadTokenizer(modelDir string) (*Tokenizer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open tokenizer file: %v", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Printf("Warning: failed to close tokenizer file: %v\n", err)
+		}
+	}()
 
 	var checkpoint TokenizerCheckpoint
 	decoder := json.NewDecoder(file)

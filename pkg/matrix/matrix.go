@@ -196,7 +196,7 @@ func Tanh(x float64) float64 {
 
 // GeLU applies Gaussian Error Linear Unit activation function
 func GeLU(x float64) float64 {
-	return 0.5 * x * (1 + math.Tanh(math.Sqrt(2/math.Pi)*(x+0.044715*math.Pow(x, 3))))
+	return 0.5 * x * (1 + math.Tanh(math.Sqrt(2/math.Pi)*(x+0.044715*x*x*x)))
 }
 
 // LayerNorm applies layer normalization to each row
