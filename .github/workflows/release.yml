@@ -12,26 +12,7 @@ jobs:
   build:
     name: Build Release Binaries
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            name: linux-amd64
-          - goos: linux
-            goarch: arm64
-            name: linux-arm64
-          - goos: darwin
-            goarch: amd64
-            name: darwin-amd64
-          - goos: darwin
-            goarch: arm64
-            name: darwin-arm64
-          - goos: windows
-            goarch: amd64
-            name: windows-amd64
-            ext: .exe
-
+    
     steps:
     - name: Check out code
       uses: actions/checkout@v4
@@ -47,36 +28,39 @@ jobs:
         path: |
           ~/.cache/go-build
           ~/go/pkg/mod
-        key: ${{ runner.os }}-go-1.22-${{ hashFiles('**/go.sum') }}
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
         restore-keys: |
-          ${{ runner.os }}-go-1.22-
+          ${{ runner.os }}-go-
 
     - name: Get version from tag
       id: get_version
       run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-    - name: Build binary
+    - name: Build Linux AMD64 binary
       env:
-        GOOS: ${{ matrix.goos }}
-        GOARCH: ${{ matrix.goarch }}
+        GOOS: linux
+        GOARCH: amd64
         CGO_ENABLED: 0
       run: |
         mkdir -p dist
-        binary_name="llm-${{ steps.get_version.outputs.VERSION }}-${{ matrix.name }}${{ matrix.ext }}"
-                  go build -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o "dist/$binary_name" cmd/llm/main.go
-        
-        # Create a tarball for non-Windows binaries
-        if [ "${{ matrix.goos }}" != "windows" ]; then
-          tar -czf "dist/llm-${{ steps.get_version.outputs.VERSION }}-${{ matrix.name }}.tar.gz" -C dist "$binary_name"
-        else
-          # Create a zip for Windows
-          cd dist && zip "llm-${{ steps.get_version.outputs.VERSION }}-${{ matrix.name }}.zip" "$binary_name" && cd ..
-        fi
+        binary_name="llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64"
+        go build -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o "dist/$binary_name" cmd/llm/main.go
+        tar -czf "dist/llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz" -C dist "$binary_name"
+
+    - name: Build Linux ARM64 binary
+      env:
+        GOOS: linux
+        GOARCH: arm64
+        CGO_ENABLED: 0
+      run: |
+        binary_name="llm-${{ steps.get_version.outputs.VERSION }}-linux-arm64"
+        go build -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o "dist/$binary_name" cmd/llm/main.go
+        tar -czf "dist/llm-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.gz" -C dist "$binary_name"
 
     - name: Upload release artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: release-${{ matrix.name }}
+        name: release-binaries
         path: dist/
 
   create-release:
@@ -92,11 +76,11 @@ jobs:
       id: get_version
       run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-    - name: Download all artifacts
+    - name: Download artifacts
       uses: actions/download-artifact@v3
-
-    - name: Display structure of downloaded files
-      run: ls -la
+      with:
+        name: release-binaries
+        path: ./dist
 
     - name: Create Release
       id: create_release
@@ -119,18 +103,16 @@ jobs:
           - Comprehensive CLI interface
           
           ### Downloads
-          Choose the binary for your platform:
+          Choose the binary for your Linux platform:
           - **Linux AMD64**: `llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz`
           - **Linux ARM64**: `llm-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.gz`
-          - **macOS Intel**: `llm-${{ steps.get_version.outputs.VERSION }}-darwin-amd64.tar.gz`
-          - **macOS Apple Silicon**: `llm-${{ steps.get_version.outputs.VERSION }}-darwin-arm64.tar.gz`
-          - **Windows**: `llm-${{ steps.get_version.outputs.VERSION }}-windows-amd64.zip`
           
           ### Usage
           ```bash
           # Extract the archive and run
-          ./llm -mode=train -epochs=10
-          ./llm -mode=generate -text="Hello world" -temperature=0.8
+          tar -xzf llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz
+          ./llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64 -mode=train -epochs=10
+          ./llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64 -mode=generate -text="Hello world" -temperature=0.8
           ```
           
           See the [README](https://github.com/${{ github.repository }}/blob/main/README.md) for full documentation.
@@ -143,7 +125,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./release-linux-amd64/llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz
+        asset_path: ./dist/llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz
         asset_name: llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz
         asset_content_type: application/gzip
 
@@ -153,36 +135,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./release-linux-arm64/llm-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.gz
+        asset_path: ./dist/llm-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.gz
         asset_name: llm-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.gz
-        asset_content_type: application/gzip
-
-    - name: Upload macOS Intel
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./release-darwin-amd64/llm-${{ steps.get_version.outputs.VERSION }}-darwin-amd64.tar.gz
-        asset_name: llm-${{ steps.get_version.outputs.VERSION }}-darwin-amd64.tar.gz
-        asset_content_type: application/gzip
-
-    - name: Upload macOS Apple Silicon
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./release-darwin-arm64/llm-${{ steps.get_version.outputs.VERSION }}-darwin-arm64.tar.gz
-        asset_name: llm-${{ steps.get_version.outputs.VERSION }}-darwin-arm64.tar.gz
-        asset_content_type: application/gzip
-
-    - name: Upload Windows
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./release-windows-amd64/llm-${{ steps.get_version.outputs.VERSION }}-windows-amd64.zip
-        asset_name: llm-${{ steps.get_version.outputs.VERSION }}-windows-amd64.zip
-        asset_content_type: application/zip 
+        asset_content_type: application/gzip 
