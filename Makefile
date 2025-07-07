@@ -150,6 +150,18 @@ tidy:
 	@echo "Tidying dependencies..."
 	$(GO_MOD) tidy
 
+# Get and update dependencies
+.PHONY: get
+get:
+	@echo "Getting dependencies..."
+	$(GO) get ./...
+
+# Update all dependencies
+.PHONY: get-update
+get-update:
+	@echo "Updating all dependencies..."
+	$(GO) get -u ./...
+
 # Run the application in training mode
 .PHONY: train
 train: build
@@ -274,6 +286,8 @@ help:
 	@echo "  fmt            - Format code"
 	@echo "  lint           - Run linter"
 	@echo "  tidy           - Tidy dependencies"
+	@echo "  get            - Get dependencies"
+	@echo "  get-update     - Update all dependencies"
 	@echo "  train          - Train the model"
 	@echo "  train-custom   - Train with custom params (EPOCHS=N LR=X)"
 	@echo "  train-wiki     - Train with Wikipedia data"

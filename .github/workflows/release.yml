@@ -36,6 +36,9 @@ jobs:
       id: get_version
       run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+    - name: Get dependencies
+      run: make get
+
     - name: Tidy dependencies
       run: make tidy
 
