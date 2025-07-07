@@ -251,7 +251,7 @@ func (t *Trainer) Evaluate(testTokens []int) float64 {
 		startIdx := i + 1 - seqLen
 
 		input := testTokens[startIdx : i+1]
-		target := testTokens[startIdx+1 : i+2]
+		target := []int{testTokens[i+1]} // Single target token for next-token prediction
 
 		loss := t.Model.ComputeLoss(input, target)
 		totalLoss += loss

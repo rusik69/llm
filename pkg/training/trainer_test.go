@@ -65,9 +65,9 @@ func TestTrainOnBatch(t *testing.T) {
 	}
 
 	targets := [][]int{
-		{2, 3, 4},
-		{5, 6, 7},
-		{8, 9, 10},
+		{4}, // Single target token for next-token prediction
+		{7},
+		{10},
 	}
 
 	loss := trainer.TrainOnBatch(sequences, targets)
@@ -189,9 +189,9 @@ func TestTrainBatch(t *testing.T) {
 		{7, 8, 9},
 	}
 	targets := [][]int{
-		{2, 3, 4},
-		{5, 6, 7},
-		{8, 9, 10},
+		{4}, // Single target token for next-token prediction
+		{7},
+		{10},
 	}
 
 	loss := trainer.TrainBatch(inputs, targets)
@@ -248,8 +248,8 @@ func TestTrainerWithDifferentLearningRates(t *testing.T) {
 	for _, lr := range learningRates {
 		trainer := New(model, lr)
 
-			if trainer.Config.LearningRate != lr {
-		t.Errorf("Expected learning rate %f, got %f", lr, trainer.Config.LearningRate)
+		if trainer.Config.LearningRate != lr {
+			t.Errorf("Expected learning rate %f, got %f", lr, trainer.Config.LearningRate)
 		}
 
 		// Test that training works with different learning rates
@@ -288,8 +288,8 @@ func TestBatchTrainingValidation(t *testing.T) {
 		{4, 5, 6},
 	}
 	targets := [][]int{
-		{2, 3, 4},
-		{5, 6, 7},
+		{4}, // Single target token for next-token prediction
+		{7},
 	}
 
 	loss := trainer.TrainOnBatch(sequences, targets)
@@ -299,7 +299,7 @@ func TestBatchTrainingValidation(t *testing.T) {
 
 	// Test with mismatched sequence lengths (should skip)
 	sequences = append(sequences, []int{1, 2})
-	targets = append(targets, []int{2, 3, 4}) // Different length
+	targets = append(targets, []int{3}) // Single target token
 
 	loss = trainer.TrainOnBatch(sequences, targets)
 	if loss <= 0 {
