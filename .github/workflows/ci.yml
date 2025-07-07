@@ -30,6 +30,9 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
     
+    - name: Install dependencies
+      run: make get
+    
     - name: Tidy dependencies
       run: make tidy
 
