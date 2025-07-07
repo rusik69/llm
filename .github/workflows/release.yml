@@ -36,6 +36,9 @@ jobs:
       id: get_version
       run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+    - name: Tidy dependencies
+      run: make tidy
+
     - name: Build Linux AMD64 binary
       env:
         GOOS: linux
@@ -44,7 +47,8 @@ jobs:
       run: |
         mkdir -p dist
         binary_name="llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64"
-        go build -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o "dist/$binary_name" cmd/llm/main.go
+        make build-linux
+        mv llm "dist/$binary_name"
         tar -czf "dist/llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz" -C dist "$binary_name"
 
     - name: Build Linux ARM64 binary
@@ -54,7 +58,8 @@ jobs:
         CGO_ENABLED: 0
       run: |
         binary_name="llm-${{ steps.get_version.outputs.VERSION }}-linux-arm64"
-        go build -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o "dist/$binary_name" cmd/llm/main.go
+        make build-linux-arm64
+        mv llm "dist/$binary_name"
         tar -czf "dist/llm-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.gz" -C dist "$binary_name"
 
     - name: Upload release artifacts
@@ -113,6 +118,10 @@ jobs:
           tar -xzf llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz
           ./llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64 -mode=train -epochs=10
           ./llm-${{ steps.get_version.outputs.VERSION }}-linux-amd64 -mode=generate -text="Hello world" -temperature=0.8
+          
+          # Or use Makefile targets for development
+          make train
+          make generate TEXT="Hello world"
           ```
           
           See the [README](https://github.com/${{ github.repository }}/blob/main/README.md) for full documentation.

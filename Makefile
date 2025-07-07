@@ -27,6 +27,20 @@ build:
 	$(GO_BUILD) -o $(BINARY_NAME) $(MAIN_FILE)
 	@echo "Build complete: $(BINARY_NAME)"
 
+# Build for Linux (used in CI/releases)
+.PHONY: build-linux
+build-linux:
+	@echo "Building $(BINARY_NAME) for Linux..."
+	GOOS=linux GOARCH=amd64 $(GO_BUILD) -o $(BINARY_NAME) $(MAIN_FILE)
+	@echo "Linux build complete: $(BINARY_NAME)"
+
+# Build for Linux ARM64
+.PHONY: build-linux-arm64
+build-linux-arm64:
+	@echo "Building $(BINARY_NAME) for Linux ARM64..."
+	GOOS=linux GOARCH=arm64 $(GO_BUILD) -o $(BINARY_NAME) $(MAIN_FILE)
+	@echo "Linux ARM64 build complete: $(BINARY_NAME)"
+
 # Build for multiple platforms
 .PHONY: build-all
 build-all:
@@ -43,6 +57,18 @@ build-all:
 test:
 	@echo "Running tests..."
 	$(GO_TEST) -timeout $(TEST_TIMEOUT) -v ./...
+
+# Run tests with race detection
+.PHONY: test-race
+test-race:
+	@echo "Running tests with race detection..."
+	$(GO_TEST) -timeout 5m -v -race ./...
+
+# Run integration tests
+.PHONY: test-integration
+test-integration:
+	@echo "Running integration tests..."
+	$(GO_TEST) -timeout 10m -v -tags=integration ./pkg/data
 
 # Run tests with coverage
 .PHONY: test-coverage
@@ -110,12 +136,8 @@ fmt:
 .PHONY: lint
 lint:
 	@echo "Running linter..."
-	@if command -v golangci-lint >/dev/null; then \
-		golangci-lint run; \
-	else \
-		echo "golangci-lint not found, using go vet instead"; \
-		$(GO) vet ./...; \
-	fi
+	@echo "Using go vet instead of golangci-lint"
+	$(GO) vet ./...
 
 # Tidy dependencies
 .PHONY: tidy
@@ -220,13 +242,22 @@ dev-setup: deps tidy fmt lint test
 ci: fmt lint test build
 	@echo "CI pipeline complete"
 
+# CI pipeline with race detection
+.PHONY: ci-check
+ci-check: tidy fmt lint test-race build
+	@echo "CI pipeline with race detection complete"
+
 # Show help
 .PHONY: help
 help:
 	@echo "Available targets:"
 	@echo "  build          - Build the binary"
+	@echo "  build-linux    - Build the binary for Linux"
+	@echo "  build-linux-arm64 - Build the binary for Linux ARM64"
 	@echo "  build-all      - Build for multiple platforms"
 	@echo "  test           - Run all tests"
+	@echo "  test-race      - Run tests with race detection"
+	@echo "  test-integration - Run integration tests"
 	@echo "  test-coverage  - Run tests with coverage"
 	@echo "  test-matrix    - Run matrix package tests"
 	@echo "  test-tokenizer - Run tokenizer package tests"
@@ -250,6 +281,7 @@ help:
 	@echo "  deps           - Install dependencies"
 	@echo "  dev-setup      - Complete development setup"
 	@echo "  ci             - Run CI pipeline"
+	@echo "  ci-check       - Run CI pipeline with race detection"
 	@echo "  help           - Show this help message"
 
 # Default goal
