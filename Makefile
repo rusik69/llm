@@ -154,13 +154,14 @@ tidy:
 .PHONY: get
 get:
 	@echo "Getting dependencies..."
-	$(GO) get ./...
+	$(GO_MOD) download
 
 # Update all dependencies
 .PHONY: get-update
 get-update:
 	@echo "Updating all dependencies..."
-	$(GO) get -u ./...
+	@echo "Note: This project uses only Go standard library packages"
+	$(GO_MOD) tidy
 
 # Run the application in training mode
 .PHONY: train
