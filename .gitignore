@@ -28,6 +28,7 @@ dist/
 # Model files and training data (these can be large)
 model/
 data/
+wiki_data/
 *.json
 *.txt
 *.xml

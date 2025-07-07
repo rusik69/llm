@@ -15,8 +15,8 @@ func TestNewTrainer(t *testing.T) {
 	if trainer.Model != model {
 		t.Error("Trainer should reference the provided model")
 	}
-	if trainer.LearningRate != lr {
-		t.Errorf("Expected learning rate %f, got %f", lr, trainer.LearningRate)
+	if trainer.Config.LearningRate != lr {
+		t.Errorf("Expected learning rate %f, got %f", lr, trainer.Config.LearningRate)
 	}
 }
 
@@ -178,25 +178,33 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
-func TestUpdateWeights(t *testing.T) {
+func TestTrainBatch(t *testing.T) {
 	model := llm.New(100, 32, 64, 1)
 	trainer := New(model, 0.01)
 
-	// Call updateWeights with significant loss
-	input := []int{1, 2, 3}
-	target := []int{2, 3, 4}
-	loss := 2.0 // High loss to trigger update
+	// Test batch training with multiple sequences
+	inputs := [][]int{
+		{1, 2, 3},
+		{4, 5, 6},
+		{7, 8, 9},
+	}
+	targets := [][]int{
+		{2, 3, 4},
+		{5, 6, 7},
+		{8, 9, 10},
+	}
 
-	trainer.updateWeights(input, target, loss)
+	loss := trainer.TrainBatch(inputs, targets)
 
-	// Test with low loss (should not update much)
-	trainer.updateWeights(input, target, 0.5)
+	if loss <= 0 {
+		t.Errorf("Expected positive loss, got %f", loss)
+	}
 
-	// Test with out-of-bounds token IDs
-	invalidInput := []int{-1, 999}
-	trainer.updateWeights(invalidInput, target, 2.0)
-
-	// Should not panic and should handle gracefully
+	// Test with single sequence
+	loss = trainer.TrainBatch(inputs[:1], targets[:1])
+	if loss <= 0 {
+		t.Errorf("Expected positive loss for single sequence, got %f", loss)
+	}
 }
 
 func TestTrainerIntegration(t *testing.T) {
@@ -240,8 +248,8 @@ func TestTrainerWithDifferentLearningRates(t *testing.T) {
 	for _, lr := range learningRates {
 		trainer := New(model, lr)
 
-		if trainer.LearningRate != lr {
-			t.Errorf("Expected learning rate %f, got %f", lr, trainer.LearningRate)
+			if trainer.Config.LearningRate != lr {
+		t.Errorf("Expected learning rate %f, got %f", lr, trainer.Config.LearningRate)
 		}
 
 		// Test that training works with different learning rates

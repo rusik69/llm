@@ -33,7 +33,7 @@ The LLM consists of several key components:
 
 ```bash
 # Using Go directly
-go build -o llm main.go
+go build -o llm cmd/llm/main.go
 
 # Using Makefile
 make build
@@ -67,6 +67,31 @@ Test coverage:
 - Data package: **100.0%**
 - LLM package: **96.2%**
 - Training package: **100.0%**
+
+#### Continuous Integration
+
+GitHub Actions runs comprehensive tests on every push and pull request:
+
+**Test Matrix:**
+- **Platforms**: Linux, macOS, Windows
+- **Go versions**: 1.20, 1.21, 1.22
+- **Architectures**: amd64, arm64
+
+**Test Jobs:**
+- 🧪 **Unit Tests**: Core functionality across all packages
+- 🔨 **Build Tests**: Cross-compilation for multiple platforms
+- 📊 **Wikipedia Tests**: Real Wikipedia data download and processing
+- 🔍 **Integration Tests**: End-to-end workflow validation
+- 🛡️ **Security Scans**: Gosec and CodeQL analysis
+- 📈 **Performance Benchmarks**: Wikipedia processing performance
+
+**Wikipedia-Specific CI Tests:**
+- Content filtering validation (no structural elements leak through)
+- Model training on Wikipedia data
+- Text generation quality with Wikipedia vocabulary
+- Cross-platform compatibility (Linux/macOS/Windows)
+- Error handling and edge cases
+- Performance measurements and benchmarks
 
 ### Training
 
@@ -123,6 +148,49 @@ Parameters:
 - `-datadir`: Directory to store downloaded data (default: ./data)
 - `-maxarticles`: Maximum number of articles to process (default: 1000)
 - `-data`: Path to training data file
+
+#### Wikipedia Test Suite
+
+Run comprehensive tests of Wikipedia functionality:
+
+```bash
+# Standard test suite
+./scripts/test_wikipedia.sh
+
+# CI mode (fast, smaller datasets)
+./scripts/test_wikipedia.sh --ci
+
+# Full test suite (comprehensive, larger datasets)
+./scripts/test_wikipedia.sh --full
+```
+
+The test suite includes:
+- ✅ Sample data processing
+- ✅ Real Wikipedia download (non-CI mode)
+- ✅ Structural content filtering validation
+- ✅ Model training on Wikipedia data
+- ✅ Text generation with Wikipedia vocabulary
+- ✅ Integration tests
+- ✅ Performance benchmarks (full mode)
+- ✅ Error handling and edge cases
+
+#### Wikipedia Content Filtering
+
+The Wikipedia processor automatically filters out structural content:
+
+**Removed Content:**
+- Tables and lists (`| Column |`, `* Item`)
+- Navigation elements (`See also`, `Main article`)
+- Wiki markup (`[[Links]]`, `{{Templates}}`)
+- HTML tags (`<ref>`, `<div>`)
+- Coordinates and metadata
+- Disambiguation pages and redirects
+
+**Preserved Content:**
+- Natural language paragraphs
+- Scientific and educational content
+- Descriptive sentences about topics
+- Clean, readable prose suitable for language modeling
 
 ### Text Generation
 
@@ -223,7 +291,9 @@ This implementation is designed for educational purposes to demonstrate:
 ## Code Structure
 
 ```
-├── main.go                 # CLI entry point
+├── cmd/
+│   └── llm/
+│       └── main.go        # CLI entry point
 ├── Makefile               # Build and test automation
 ├── pkg/
 │   ├── matrix/
@@ -242,6 +312,9 @@ This implementation is designed for educational purposes to demonstrate:
 │   └── training/
 │       ├── trainer.go     # Training logic
 │       └── trainer_test.go # Training tests
+├── scripts/
+│   └── test_wikipedia.sh  # Wikipedia testing script
+├── .github/workflows/     # GitHub Actions CI/CD
 ├── go.mod                 # Go module definition
 └── README.md             # Project documentation
 ```

@@ -155,8 +155,8 @@ issues:
         - scopelint
         - lll
     
-    # Exclude some linters from running on main.go
-    - path: main\.go
+    # Exclude some linters from running on cmd/llm/main.go
+          - path: cmd/llm/main\.go
       linters:
         - gocyclo
         - funlen

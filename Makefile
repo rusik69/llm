@@ -5,7 +5,7 @@
 
 # Variables
 BINARY_NAME=llm
-MAIN_FILE=main.go
+MAIN_FILE=cmd/llm/main.go
 BUILD_DIR=build
 TEST_TIMEOUT=30s
 

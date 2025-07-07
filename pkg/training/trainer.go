@@ -3,6 +3,7 @@ package training
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"strings"
 
@@ -10,153 +11,206 @@ import (
 	"github.com/rusik69/llm/pkg/tokenizer"
 )
 
-// Trainer handles model training
+// Trainer handles model training with proper backpropagation
 type Trainer struct {
-	Model        *llm.LLM
-	LearningRate float64
+	Model     *llm.LLM
+	Optimizer *llm.AdamOptimizer
+	Config    *TrainingConfig
+}
+
+// TrainingConfig holds training configuration
+type TrainingConfig struct {
+	LearningRate    float64
+	BatchSize       int
+	MaxGradNorm     float64 // For gradient clipping
+	ValidationSplit float64 // Fraction of data to use for validation
+	WarmupSteps     int
+	UseWarmup       bool
+}
+
+// DefaultTrainingConfig returns default training configuration
+func DefaultTrainingConfig() *TrainingConfig {
+	return &TrainingConfig{
+		LearningRate:    0.001,
+		BatchSize:       16,
+		MaxGradNorm:     1.0,
+		ValidationSplit: 0.1,
+		WarmupSteps:     1000,
+		UseWarmup:       false, // Disable warmup for debugging
+	}
 }
 
 // New creates a new trainer
 func New(model *llm.LLM, learningRate float64) *Trainer {
+	config := DefaultTrainingConfig()
+	config.LearningRate = learningRate
+
+	optimizerConfig := llm.DefaultOptimizerConfig()
+	optimizerConfig.LearningRate = learningRate
+
 	return &Trainer{
-		Model:        model,
-		LearningRate: learningRate,
+		Model:     model,
+		Optimizer: llm.NewAdamOptimizer(model, optimizerConfig),
+		Config:    config,
 	}
 }
 
-// Train performs training on the given sequence
+// NewWithConfig creates a new trainer with custom configuration
+func NewWithConfig(model *llm.LLM, config *TrainingConfig) *Trainer {
+	if config == nil {
+		config = DefaultTrainingConfig()
+	}
+
+	optimizerConfig := llm.DefaultOptimizerConfig()
+	optimizerConfig.LearningRate = config.LearningRate
+
+	return &Trainer{
+		Model:     model,
+		Optimizer: llm.NewAdamOptimizer(model, optimizerConfig),
+		Config:    config,
+	}
+}
+
+// Train performs efficient training with batching and sampling
 func (t *Trainer) Train(tokens []int, epochs int) error {
 	if len(tokens) < 2 {
 		return fmt.Errorf("training sequence must have at least 2 tokens")
 	}
 
 	fmt.Printf("Starting training with %d tokens for %d epochs\n", len(tokens), epochs)
+	fmt.Printf("Using Adam optimizer with learning rate: %.6f\n", t.Config.LearningRate)
+
+	// Set model to training mode
+	t.Model.Train()
+
+	// Configure training parameters for efficiency
+	maxSequenceLength := 20
+	samplesPerEpoch := min(len(tokens)/10, 10000) // Sample at most 10k examples per epoch
+	batchSize := t.Config.BatchSize
+
+	fmt.Printf("Training with %d samples per epoch, batch size %d\n", samplesPerEpoch, batchSize)
 
 	for epoch := 0; epoch < epochs; epoch++ {
 		totalLoss := 0.0
 		numBatches := 0
+		processed := 0
 
-		// Create sliding window training examples
-		for i := 0; i < len(tokens)-1; i++ {
-			// Prepare input and target sequences
-			seqLen := int(math.Min(float64(i+1), 20)) // Max sequence length of 20
-			startIdx := i + 1 - seqLen
+		// Process in batches for efficiency
+		for batchStart := 0; batchStart < samplesPerEpoch; batchStart += batchSize {
+			batchEnd := min(batchStart+batchSize, samplesPerEpoch)
+			currentBatchSize := batchEnd - batchStart
 
-			input := tokens[startIdx : i+1]
-			target := tokens[startIdx+1 : i+2]
+			var batchInputs [][]int
+			var batchTargets [][]int
 
-			// Compute loss
-			loss := t.Model.ComputeLoss(input, target)
-			totalLoss += loss
+			// Create batch of training examples
+			for i := 0; i < currentBatchSize; i++ {
+				// Sample random position from tokens (more efficient than sequential)
+				randomPos := rand.Intn(len(tokens) - maxSequenceLength - 1)
+
+				// Create input sequence
+				seqLen := min(maxSequenceLength, randomPos+1)
+				startIdx := randomPos + 1 - seqLen
+
+				input := make([]int, seqLen)
+				copy(input, tokens[startIdx:randomPos+1])
+
+				target := []int{tokens[randomPos+1]}
+
+				batchInputs = append(batchInputs, input)
+				batchTargets = append(batchTargets, target)
+			}
+
+			// Train on batch
+			batchLoss := t.TrainBatch(batchInputs, batchTargets)
+			totalLoss += batchLoss
 			numBatches++
+			processed += currentBatchSize
 
-			// Simple gradient descent (very basic implementation)
-			t.updateWeights(input, target, loss)
+			// Debug: Check optimizer state
+			if numBatches == 1 {
+				fmt.Printf("First batch - Step: %d, Config LR: %.6f, Effective LR: %.6f\n",
+					t.Optimizer.State.Step, t.Optimizer.Config.LearningRate, t.Optimizer.GetLearningRate())
+			}
+
+			// Apply learning rate warmup if enabled
+			if t.Config.UseWarmup && t.Optimizer.State.Step < int64(t.Config.WarmupSteps) {
+				warmupLR := t.Config.LearningRate * float64(t.Optimizer.State.Step) / float64(t.Config.WarmupSteps)
+				t.Optimizer.SetLearningRate(warmupLR)
+			}
+
+			// Progress indicator
+			if numBatches%10 == 0 || batchStart+batchSize >= samplesPerEpoch {
+				progress := float64(processed) / float64(samplesPerEpoch) * 100
+				fmt.Printf("\rEpoch %d: %.1f%% complete, Current Loss: %.4f, LR: %.6f",
+					epoch+1, progress, batchLoss, t.Optimizer.GetLearningRate())
+			}
 		}
 
 		avgLoss := totalLoss / float64(numBatches)
-		fmt.Printf("Epoch %d: Average Loss = %.4f\n", epoch+1, avgLoss)
+		currentLR := t.Optimizer.GetLearningRate()
+		fmt.Printf("\nEpoch %d: Average Loss = %.4f, Learning Rate = %.6f\n", epoch+1, avgLoss, currentLR)
 	}
 
+	// Set model to evaluation mode
+	t.Model.Eval()
 	fmt.Println("Training completed!")
 	return nil
 }
 
-// updateWeights performs improved weight updates with gradient clipping
-func (t *Trainer) updateWeights(input []int, target []int, loss float64) {
-	// Clip gradient to prevent exploding gradients
-	maxGrad := 1.0
-	if loss > maxGrad {
-		loss = maxGrad
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
-
-	// Simple gradient approximation for educational purposes
-	// In a real implementation, you would compute actual gradients through backpropagation
-
-	// Adjust learning rate based on loss to prevent divergence
-	adaptiveLR := t.LearningRate
-	if loss > 10.0 {
-		adaptiveLR = t.LearningRate * 0.1 // Reduce learning rate if loss is too high
-	} else if loss > 5.0 {
-		adaptiveLR = t.LearningRate * 0.5
-	}
-
-	// Extremely simple weight update (for educational purposes)
-	// This is not real backpropagation but shows the concept
-
-	// Small random perturbation in the direction that should reduce loss
-	perturbation := adaptiveLR * 0.001 // Very small updates
-
-	// Update a small subset of embedding weights
-	vocabSize := t.Model.VocabSize
-	embedSize := t.Model.EmbedSize
-
-	// Update weights for the tokens in the input
-	for _, tokenID := range input {
-		if tokenID >= 0 && tokenID < vocabSize {
-			for j := 0; j < embedSize; j++ {
-				current := t.Model.Embedding.Weights.Get(tokenID, j)
-				// Small random update weighted by loss
-				// Simple pseudo-random based on token and position
-				randVal := float64((tokenID+j*17)%100)/100.0 - 0.5 // Random between -0.5 and 0.5
-				update := randVal * perturbation
-				newValue := current + update
-
-				// Clamp weights to prevent them from growing too large
-				if newValue > 1.0 {
-					newValue = 1.0
-				} else if newValue < -1.0 {
-					newValue = -1.0
-				}
-
-				t.Model.Embedding.Weights.Set(tokenID, j, newValue)
-			}
-		}
-	}
-
-	// Update target token weights slightly
-	for _, tokenID := range target {
-		if tokenID >= 0 && tokenID < vocabSize {
-			for j := 0; j < embedSize; j++ {
-				current := t.Model.Embedding.Weights.Get(tokenID, j)
-				// Encourage target tokens slightly
-				update := perturbation * 0.1
-				newValue := current + update
-
-				// Clamp weights
-				if newValue > 1.0 {
-					newValue = 1.0
-				} else if newValue < -1.0 {
-					newValue = -1.0
-				}
-
-				t.Model.Embedding.Weights.Set(tokenID, j, newValue)
-			}
-		}
-	}
+	return b
 }
 
-// TrainOnBatch trains on a batch of sequences
-func (t *Trainer) TrainOnBatch(sequences [][]int, targets [][]int) float64 {
-	if len(sequences) != len(targets) {
-		panic("Number of sequences must match number of targets")
+// TrainBatch performs training on a batch of sequences with proper backpropagation
+func (t *Trainer) TrainBatch(inputs [][]int, targets [][]int) float64 {
+	if len(inputs) != len(targets) {
+		panic("Number of input sequences must match number of target sequences")
 	}
 
 	totalLoss := 0.0
 
-	for i := 0; i < len(sequences); i++ {
-		if len(sequences[i]) != len(targets[i]) {
-			continue // Skip invalid sequences
+	// Set model to training mode
+	t.Model.Train()
+
+	// Process each example in the batch
+	for i := 0; i < len(inputs); i++ {
+		// Debug: Check training data
+		if i == 0 {
+			fmt.Printf("Sample input: %v, target: %v\n", inputs[i], targets[i])
 		}
 
-		loss := t.Model.ComputeLoss(sequences[i], targets[i])
+		// Compute loss
+		loss := t.Model.ComputeLoss(inputs[i], targets[i])
 		totalLoss += loss
 
-		// Update weights
-		t.updateWeights(sequences[i], targets[i], loss)
+		// Debug: Check loss values
+		if i == 0 {
+			fmt.Printf("Sample loss: %.6f\n", loss)
+		}
+
+		// Compute gradients
+		gradients := t.Model.ComputeGradients(inputs[i], targets[i])
+
+		// Apply gradient clipping
+		if t.Config.MaxGradNorm > 0 {
+			gradients.ClipGradients(t.Config.MaxGradNorm)
+		}
+
+		// Update parameters
+		t.Optimizer.Step(t.Model, gradients)
 	}
 
-	return totalLoss / float64(len(sequences))
+	return totalLoss / float64(len(inputs))
+}
+
+// TrainOnBatch trains on a batch of sequences (legacy method - use TrainBatch instead)
+func (t *Trainer) TrainOnBatch(sequences [][]int, targets [][]int) float64 {
+	return t.TrainBatch(sequences, targets)
 }
 
 // PrepareTrainingData creates input-target pairs from a token sequence

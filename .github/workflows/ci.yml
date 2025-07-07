@@ -41,7 +41,9 @@ jobs:
       run: go mod verify
 
     - name: Run tests
-      run: go test -v -race -timeout=5m ./...
+      run: |
+        go test -v -race -timeout=5m ./...
+        go test -v -tags=integration -timeout=10m ./pkg/data
 
     - name: Run tests with coverage
       if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.22'
@@ -93,9 +95,9 @@ jobs:
       run: |
         mkdir -p build
         if [ "$GOOS" = "windows" ]; then
-          go build -o build/llm-${{ matrix.goos }}-${{ matrix.goarch }}.exe main.go
+          go build -o build/llm-${{ matrix.goos }}-${{ matrix.goarch }}.exe cmd/llm/main.go
         else
-          go build -o build/llm-${{ matrix.goos }}-${{ matrix.goarch }} main.go
+          go build -o build/llm-${{ matrix.goos }}-${{ matrix.goarch }} cmd/llm/main.go
         fi
 
     - name: Upload build artifacts
@@ -141,10 +143,20 @@ jobs:
       with:
         args: './...'
 
-  integration:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    needs: [test, build, lint]
+  wikipedia:
+    name: Wikipedia Data Tests
+    runs-on: ${{ matrix.os }}
+    needs: test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            articles: 20
+          - os: macos-latest
+            articles: 15
+          - os: windows-latest
+            articles: 10
     
     steps:
     - name: Check out code
@@ -155,23 +167,376 @@ jobs:
       with:
         go-version: '1.22'
 
+    - name: Cache Wikipedia dump
+      uses: actions/cache@v3
+      with:
+        path: |
+          ./wiki_data_test
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-wikipedia-${{ matrix.articles }}-v2
+        restore-keys: |
+          ${{ runner.os }}-wikipedia-
+
+    - name: Build project
+      run: |
+        go mod download
+        go build -o llm cmd/llm/main.go
+
+    - name: Run Wikipedia integration tests
+      shell: bash
+      run: |
+        # Run Wikipedia-specific integration tests
+        go test -v -tags=integration -timeout=10m ./pkg/data
+        echo "Integration tests completed successfully"
+
+    - name: Test Wikipedia download and filtering
+      shell: bash
+      run: |
+        # Test Wikipedia data download with filtering
+        if [ "${{ runner.os }}" = "Windows" ]; then
+          ./llm.exe -mode=download -datadir=wiki_data_test -maxarticles=${{ matrix.articles }}
+        else
+          ./llm -mode=download -datadir=wiki_data_test -maxarticles=${{ matrix.articles }}
+        fi
+        
+        # Verify training data was created
+        if [ ! -f "wiki_data_test/training_data.txt" ]; then
+          echo "Training data file not created"
+          exit 1
+        fi
+
+    - name: Validate content filtering
+      shell: bash
+      run: |
+        # Check that structural content was filtered out
+        content_file="wiki_data_test/training_data.txt"
+        
+        # Count filtered structural elements
+        table_count=$(grep -c "^|.*|" "$content_file" || true)
+        header_count=$(grep -c "^==" "$content_file" || true)  
+        list_count=$(grep -c "^\\*\\*" "$content_file" || true)
+        nav_count=$(grep -c "thumb|" "$content_file" || true)
+        
+        echo "Structural elements found:"
+        echo "  Tables: $table_count"
+        echo "  Headers: $header_count" 
+        echo "  Lists: $list_count"
+        echo "  Navigation: $nav_count"
+        
+        # Verify content quality
+        line_count=$(wc -l < "$content_file")
+        word_count=$(wc -w < "$content_file")
+        
+        echo "Content statistics:"
+        echo "  Lines: $line_count"
+        echo "  Words: $word_count"
+        echo "  Avg words per line: $((word_count / line_count))"
+        
+        # Minimum quality checks
+        if [ "$line_count" -lt 10 ]; then
+          echo "ERROR: Too few lines of content ($line_count)"
+          exit 1
+        fi
+        
+        if [ "$word_count" -lt 100 ]; then
+          echo "ERROR: Too few words of content ($word_count)"
+          exit 1
+        fi
+
+    - name: Test Wikipedia training
+      shell: bash
+      run: |
+        # Train on Wikipedia data
+        if [ "${{ runner.os }}" = "Windows" ]; then
+          ./llm.exe -mode=train -datadir=wiki_data_test -epochs=2 -lr=0.0001
+        else
+          ./llm -mode=train -datadir=wiki_data_test -epochs=2 -lr=0.0001
+        fi
+        
+        # Verify model was created
+        if [ ! -f "model/model.json" ] || [ ! -f "model/tokenizer.json" ]; then
+          echo "Model files not created"
+          exit 1
+        fi
+
+    - name: Test generation quality
+      shell: bash
+      run: |
+        # Test generation with Wikipedia vocabulary
+        echo "Testing generation with Wikipedia-trained model..."
+        
+        if [ "${{ runner.os }}" = "Windows" ]; then
+          llm_cmd="./llm.exe"
+        else
+          llm_cmd="./llm"
+        fi
+        
+        # Test multiple prompts and capture output
+        $llm_cmd -mode=generate -text="Science" -maxtokens=15 -temperature=0.8 > output1.txt
+        $llm_cmd -mode=generate -text="Technology" -maxtokens=15 -temperature=0.8 > output2.txt
+        $llm_cmd -mode=generate -text="Mathematics" -maxtokens=15 -temperature=0.8 > output3.txt
+        
+        # Verify generation produces output
+        for output in output1.txt output2.txt output3.txt; do
+          if [ ! -s "$output" ]; then
+            echo "ERROR: Generation failed for $output"
+            exit 1
+          fi
+          echo "Generated content in $output:"
+          cat "$output"
+          echo "---"
+        done
+
+    - name: Performance benchmarks
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash
+      run: |
+        # Benchmark Wikipedia data processing
+        echo "=== Performance Benchmarks ==="
+        
+        # Measure download time
+        start_time=$(date +%s)
+        ./llm -mode=download -datadir=bench_test -maxarticles=5
+        download_time=$(($(date +%s) - start_time))
+        echo "Download time: ${download_time}s"
+        
+        # Measure training time
+        start_time=$(date +%s)
+        ./llm -mode=train -datadir=bench_test -epochs=1 -lr=0.001
+        train_time=$(($(date +%s) - start_time))
+        echo "Training time: ${train_time}s"
+        
+        # Measure generation time
+        start_time=$(date +%s)
+        ./llm -mode=generate -text="Test" -maxtokens=20 > /dev/null
+        gen_time=$(($(date +%s) - start_time))
+        echo "Generation time: ${gen_time}s"
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [test, build, lint, wikipedia]
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22'
+
+    - name: Cache Wikipedia data
+      uses: actions/cache@v3
+      with:
+        path: |
+          ./wiki_cache
+        key: ${{ runner.os }}-wikipedia-data-v1
+        restore-keys: |
+          ${{ runner.os }}-wikipedia-data-
+
     - name: Build project
       run: make build
 
-    - name: Run integration tests
+    - name: Run basic integration tests
       run: |
         # Test basic functionality
         ./llm -mode=train -epochs=2 -lr=0.001
         ./llm -mode=generate -text="Hello world" -maxtokens=10 -temperature=0.8
+
+    - name: Test sample Wikipedia data
+      run: |
+        # Test sample Wikipedia data processing
+        ./llm -mode=download -sample=true -datadir=test_sample -maxarticles=5
+        if [ ! -f "test_sample/training_data.txt" ]; then
+          echo "Sample Wikipedia data file not created"
+          exit 1
+        fi
         
-        # Test Wikipedia data processing
-        ./llm -mode=download -sample=true -datadir=test_data
-        ./llm -mode=train -data=test_data/training_data.txt -epochs=1 -lr=0.001
-        ./llm -mode=generate -text="Test" -maxtokens=5
+        # Check sample data quality
+        line_count=$(wc -l < test_sample/training_data.txt)
+        if [ "$line_count" -lt 5 ]; then
+          echo "Sample data too small: $line_count lines"
+          exit 1
+        fi
+        
+        # Train on sample data
+        ./llm -mode=train -datadir=test_sample -epochs=1 -lr=0.001
+        ./llm -mode=generate -text="Science is" -maxtokens=5
+
+    - name: Test real Wikipedia data download
+      run: |
+        # Test real Wikipedia data download (small dataset for CI)
+        ./llm -mode=download -datadir=wiki_test -maxarticles=10
+        if [ ! -f "wiki_test/training_data.txt" ]; then
+          echo "Wikipedia data file not created"
+          exit 1
+        fi
+        
+        # Verify data quality
+        line_count=$(wc -l < wiki_test/training_data.txt)
+        echo "Wikipedia data lines: $line_count"
+        
+        # Check for proper content filtering (should not contain structural elements)
+        if grep -q "^|.*|.*|" wiki_test/training_data.txt; then
+          echo "Found table structures in filtered data"
+          exit 1
+        fi
+        
+        if grep -q "^==.*==" wiki_test/training_data.txt; then
+          echo "Found section headers in filtered data"
+          exit 1
+        fi
+        
+        if grep -q "^\\*.*\\*" wiki_test/training_data.txt; then
+          echo "Found list structures in filtered data"  
+          exit 1
+        fi
+
+    - name: Test Wikipedia data training
+      run: |
+        # Train model on Wikipedia data
+        ./llm -mode=train -datadir=wiki_test -epochs=3 -lr=0.0001
+        
+        # Verify model files were created
+        if [ ! -f "model/model.json" ]; then
+          echo "Model file not created"
+          exit 1
+        fi
+        
+        if [ ! -f "model/tokenizer.json" ]; then
+          echo "Tokenizer file not created"
+          exit 1
+        fi
+
+    - name: Test Wikipedia-trained model generation
+      run: |
+        # Test generation with different prompts
+        echo "Testing generation with Wikipedia-trained model..."
+        
+        # Test science-related generation
+        ./llm -mode=generate -text="Science is" -maxtokens=20 -temperature=0.7
+        
+        # Test technology-related generation  
+        ./llm -mode=generate -text="Computer" -maxtokens=15 -temperature=0.6
+        
+        # Test with different sampling parameters
+        ./llm -mode=generate -text="Mathematics" -maxtokens=10 -temperature=0.9 -topk=30
+        ./llm -mode=generate -text="Art is" -maxtokens=12 -reppenalty=1.5 -norep=4
+
+    - name: Test data processing edge cases
+      run: |
+        # Test with very small dataset
+        ./llm -mode=download -datadir=tiny_test -maxarticles=2
+        
+        # Test error handling for missing data
+        if ./llm -mode=train -datadir=nonexistent 2>/dev/null; then
+          echo "Should have failed with missing data directory"
+          exit 1
+        fi
+        
+        # Test generation without trained model
+        rm -rf model/
+        if ./llm -mode=generate -text="test" 2>/dev/null; then
+          echo "Should have failed without model"
+          exit 1
+        fi
+
+    - name: Test Wikipedia data caching
+      run: |
+        # Test that Wikipedia dump is reused if already downloaded
+        ./llm -mode=download -datadir=cache_test -maxarticles=5
+        
+        # Record initial download time
+        start_time=$(date +%s)
+        ./llm -mode=download -datadir=cache_test2 -maxarticles=5
+        end_time=$(date +%s)
+        
+                 echo "Second download took $((end_time - start_time)) seconds"
+
+    - name: Run Wikipedia test script
+      run: |
+        # Test the dedicated Wikipedia test script
+        chmod +x scripts/test_wikipedia.sh
+        ./scripts/test_wikipedia.sh --ci
+        echo "Wikipedia test script completed successfully"
 
     - name: Test Makefile targets
       run: |
         make test
         make clean
         make build
-        make fmt 
+        make fmt
+
+    - name: Verify Wikipedia data quality
+      run: |
+        # Final verification of Wikipedia processing
+        echo "=== Sample Wikipedia Content ==="
+        head -5 wiki_test/training_data.txt
+        echo "=== Content Statistics ==="
+        echo "Total lines: $(wc -l < wiki_test/training_data.txt)"
+        echo "Total words: $(wc -w < wiki_test/training_data.txt)"
+                 echo "Average line length: $(awk '{total += length($0); count++} END {print total/count}' wiki_test/training_data.txt)"
+
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [test, build, lint, security, wikipedia, integration]
+    if: always()
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Test Results Summary
+      run: |
+        echo "# LLM Test Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Test Status" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ needs.test.result }}" = "success" ]; then
+          echo "✅ Unit Tests: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Unit Tests: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ needs.build.result }}" = "success" ]; then
+          echo "✅ Build: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Build: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ needs.lint.result }}" = "success" ]; then
+          echo "✅ Linting: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Linting: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ needs.security.result }}" = "success" ]; then
+          echo "✅ Security Scan: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Security Scan: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ needs.wikipedia.result }}" = "success" ]; then
+          echo "✅ Wikipedia Data Tests: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Wikipedia Data Tests: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ needs.integration.result }}" = "success" ]; then
+          echo "✅ Integration Tests: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Integration Tests: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Wikipedia Features Tested" >> $GITHUB_STEP_SUMMARY
+        echo "- Real Wikipedia data download" >> $GITHUB_STEP_SUMMARY
+        echo "- Structural content filtering" >> $GITHUB_STEP_SUMMARY  
+        echo "- Content quality validation" >> $GITHUB_STEP_SUMMARY
+        echo "- Model training on Wikipedia data" >> $GITHUB_STEP_SUMMARY
+        echo "- Text generation with Wikipedia vocabulary" >> $GITHUB_STEP_SUMMARY
+        echo "- Cross-platform compatibility (Linux, macOS, Windows)" >> $GITHUB_STEP_SUMMARY
+        echo "- Performance benchmarking" >> $GITHUB_STEP_SUMMARY
+        echo "- Error handling and edge cases" >> $GITHUB_STEP_SUMMARY 

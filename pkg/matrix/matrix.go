@@ -193,3 +193,75 @@ func Sigmoid(x float64) float64 {
 func Tanh(x float64) float64 {
 	return math.Tanh(x)
 }
+
+// GeLU applies Gaussian Error Linear Unit activation function
+func GeLU(x float64) float64 {
+	return 0.5 * x * (1 + math.Tanh(math.Sqrt(2/math.Pi)*(x+0.044715*math.Pow(x, 3))))
+}
+
+// LayerNorm applies layer normalization to each row
+func (m *Matrix) LayerNorm(eps float64) *Matrix {
+	result := New(m.Rows, m.Cols)
+
+	for i := 0; i < m.Rows; i++ {
+		// Calculate mean
+		mean := 0.0
+		for j := 0; j < m.Cols; j++ {
+			mean += m.Data[i][j]
+		}
+		mean /= float64(m.Cols)
+
+		// Calculate variance
+		variance := 0.0
+		for j := 0; j < m.Cols; j++ {
+			diff := m.Data[i][j] - mean
+			variance += diff * diff
+		}
+		variance /= float64(m.Cols)
+
+		// Apply normalization
+		stddev := math.Sqrt(variance + eps)
+		for j := 0; j < m.Cols; j++ {
+			result.Data[i][j] = (m.Data[i][j] - mean) / stddev
+		}
+	}
+
+	return result
+}
+
+// Dropout applies dropout with given probability (for training)
+func (m *Matrix) Dropout(dropoutRate float64, training bool) *Matrix {
+	if !training || dropoutRate == 0 {
+		return m.Copy()
+	}
+
+	result := New(m.Rows, m.Cols)
+	scale := 1.0 / (1.0 - dropoutRate)
+
+	for i := 0; i < m.Rows; i++ {
+		for j := 0; j < m.Cols; j++ {
+			if rand.Float64() > dropoutRate {
+				result.Data[i][j] = m.Data[i][j] * scale
+			} else {
+				result.Data[i][j] = 0
+			}
+		}
+	}
+
+	return result
+}
+
+// ElementwiseMultiply performs element-wise multiplication (Hadamard product)
+func (m *Matrix) ElementwiseMultiply(other *Matrix) *Matrix {
+	if m.Rows != other.Rows || m.Cols != other.Cols {
+		panic("Matrix dimensions don't match for element-wise multiplication")
+	}
+
+	result := New(m.Rows, m.Cols)
+	for i := 0; i < m.Rows; i++ {
+		for j := 0; j < m.Cols; j++ {
+			result.Data[i][j] = m.Data[i][j] * other.Data[i][j]
+		}
+	}
+	return result
+}
