@@ -3,7 +3,7 @@ package training
 import (
 	"testing"
 
-	"github.com/rusik69/llm/pkg/llm"
+	"github.com/rusik69/shittyllm/pkg/llm"
 )
 
 func TestNewTrainer(t *testing.T) {

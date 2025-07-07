@@ -4,8 +4,8 @@
 # the simple LLM implementation.
 
 # Variables
-BINARY_NAME=llm
-MAIN_FILE=cmd/llm/main.go
+BINARY_NAME=shittyllm
+MAIN_FILE=cmd/shittyllm/main.go
 BUILD_DIR=build
 TEST_TIMEOUT=30s
 

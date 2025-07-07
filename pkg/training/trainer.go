@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/rusik69/llm/pkg/llm"
-	"github.com/rusik69/llm/pkg/tokenizer"
+	"github.com/rusik69/shittyllm/pkg/llm"
+	"github.com/rusik69/shittyllm/pkg/tokenizer"
 )
 
 // Trainer handles model training with proper backpropagation
