@@ -1,3 +1,3 @@
 module github.com/rusik69/llm
 
-go 1.24.4
+go 1.24
