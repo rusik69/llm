@@ -39,9 +39,6 @@ jobs:
     - name: Get dependencies
       run: make get
 
-    - name: Tidy dependencies
-      run: make tidy
-
     - name: Build Linux AMD64 binary
       env:
         GOOS: linux

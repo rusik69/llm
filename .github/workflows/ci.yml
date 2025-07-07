@@ -32,9 +32,6 @@ jobs:
     
     - name: Install dependencies
       run: make get
-    
-    - name: Tidy dependencies
-      run: make tidy
 
     - name: Run tests with race detection
       run: make test-race
