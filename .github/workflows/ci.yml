@@ -35,9 +35,6 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
-    - name: Get dependencies
-      run: make get
-
     - name: Format check
       run: make fmt
 
