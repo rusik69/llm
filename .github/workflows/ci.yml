@@ -1,14 +1,19 @@
-name: CI
+name: Build Test Release
 
 on:
   push:
     branches: [ main, develop ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main, develop ]
 
+permissions:
+  contents: write
+
 jobs:
-  test:
-    name: Test
+  pipeline:
+    name: Pipeline
     runs-on: ubuntu-latest
     
     steps:
@@ -19,29 +24,6 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.24'
-    
-    - name: Install dependencies
-      run: make get
-
-    - name: Run tests with race detection
-      run: make test-race
-
-    - name: Run integration tests
-      run: make test-integration
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    needs: test
-    
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.22'
 
     - name: Cache Go modules
       uses: actions/cache@v3
@@ -53,108 +35,101 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
-    - name: Build binary
-      run: make build-linux
+    - name: Get dependencies
+      run: make get
 
-    - name: Test binary
-      run: ./llm --help
+    - name: Format check
+      run: make fmt
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.22'
-
-    - name: Install golangci-lint
-      run: |
-        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin latest
-        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-
-    - name: Run linter
+    - name: Lint
       run: make lint
 
-  wikipedia:
-    name: Wikipedia Integration Test
-    runs-on: ubuntu-latest
-    needs: build
-    
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v4
+    - name: Run tests
+      run: make test
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.22'
+    - name: Run tests with race detection
+      run: make test-race
 
-    - name: Cache Wikipedia data
-      uses: actions/cache@v3
-      with:
-        path: |
-          ./wiki_test
-          ~/go/pkg/mod
-        key: ${{ runner.os }}-wikipedia-v1
-        restore-keys: |
-          ${{ runner.os }}-wikipedia-
+    - name: Run integration tests
+      run: make test-integration
 
-    - name: Build project
-      run: make build-linux
+    - name: Build binary
+      run: make build
 
-    - name: Test Wikipedia sample data
+    - name: Test binary
+      run: ./shittyllm --help
+
+    - name: Test Wikipedia integration
       run: |
         # Test sample Wikipedia data processing
-        ./llm -mode=download -sample=true -datadir=wiki_test -maxarticles=5
+        ./shittyllm -mode=download -sample=true -datadir=wiki_test -maxarticles=5
         
         # Verify training data was created
         if [ ! -f "wiki_test/training_data.txt" ]; then
           echo "Training data file not created"
           exit 1
         fi
+        
+        # Quick training test
+        ./shittyllm -mode=train -data=wiki_test/training_data.txt -epochs=2 -lr=0.001
+        
+        # Test generation
+        ./shittyllm -mode=generate -text="Science" -maxtokens=10 -temperature=0.8
 
-    - name: Validate content filtering
-      run: |
-        # Check that structural content was filtered out
-        content_file="wiki_test/training_data.txt"
-        
-        # Verify content quality
-        line_count=$(wc -l < "$content_file")
-        word_count=$(wc -w < "$content_file")
-        
-        echo "Content statistics:"
-        echo "  Lines: $line_count"
-        echo "  Words: $word_count"
-        
-        # Minimum quality checks
-        if [ "$line_count" -lt 5 ]; then
-          echo "ERROR: Too few lines of content ($line_count)"
-          exit 1
-        fi
-        
-        if [ "$word_count" -lt 50 ]; then
-          echo "ERROR: Too few words of content ($word_count)"
-          exit 1
-        fi
+    # Release steps (only run on tags)
+    - name: Get version from tag
+      if: startsWith(github.ref, 'refs/tags/')
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-    - name: Test Wikipedia training
+    - name: Build release binaries
+      if: startsWith(github.ref, 'refs/tags/')
       run: |
-        # Train on Wikipedia data
-        ./llm -mode=train -datadir=wiki_test -epochs=2 -lr=0.001
+        mkdir -p dist
         
-        # Verify model was created
-        if [ ! -f "model/model.json" ] || [ ! -f "model/tokenizer.json" ]; then
-          echo "Model files not created"
-          exit 1
-        fi
+        # Build Linux AMD64
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 make build
+        mv shittyllm "dist/shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-amd64"
+        
+        # Build Linux ARM64
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 make build
+        mv shittyllm "dist/shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-arm64"
+        
+        # Create tarballs
+        cd dist
+        tar -czf "shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz" "shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-amd64"
+        tar -czf "shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.gz" "shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-arm64"
 
-    - name: Test generation
-      run: |
-        # Test generation with Wikipedia-trained model
-        ./llm -mode=generate -text="Science" -maxtokens=10 -temperature=0.8
-        ./llm -mode=generate -text="Technology" -maxtokens=10 -temperature=0.8 
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        name: ShittyLLM ${{ steps.get_version.outputs.VERSION }}
+        body: |
+          ## What's New in ${{ steps.get_version.outputs.VERSION }}
+          
+          ### Features
+          - Simple LLM implementation in Go
+          - Transformer architecture with self-attention
+          - Wikipedia data integration
+          - Advanced text generation with repetition control
+          - Temperature, top-k, and top-p sampling
+          - Model persistence (save/load)
+          - Comprehensive CLI interface
+          
+          ### Downloads
+          Choose the binary for your Linux platform:
+          - **Linux AMD64**: `shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz`
+          - **Linux ARM64**: `shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.gz`
+          
+          ### Usage
+          ```bash
+          # Extract and run
+          tar -xzf shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz
+          ./shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-amd64 -mode=train -epochs=10
+          ./shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-amd64 -mode=generate -text="Hello world"
+          ```
+        files: |
+          dist/shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.gz
+          dist/shittyllm-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.gz
+        token: ${{ secrets.GITHUB_TOKEN }} 

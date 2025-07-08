@@ -155,7 +155,7 @@ tidy:
 .PHONY: get
 get:
 	@echo "Getting dependencies..."
-	$(GO_GET) ./...
+	$(GO_MOD) tidy
 
 # Update all dependencies
 .PHONY: get-update
