@@ -4,6 +4,8 @@
 *.dll
 *.so
 *.dylib
+shittyllm
+shittyllm.exe
 llm
 llm.exe
 
