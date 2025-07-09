@@ -285,3 +285,83 @@ func (g *Gradients) scaleGradients(scale float64) {
 		}
 	}
 }
+
+// Scale scales all gradients by a factor (public method)
+func (g *Gradients) Scale(scale float64) {
+	g.scaleGradients(scale)
+}
+
+// Add adds another gradient to this one (for parallel training)
+func (g *Gradients) Add(other *Gradients) {
+	if other == nil {
+		return
+	}
+
+	// Add embedding gradients
+	for i := 0; i < g.EmbeddingGrads.Rows && i < other.EmbeddingGrads.Rows; i++ {
+		for j := 0; j < g.EmbeddingGrads.Cols && j < other.EmbeddingGrads.Cols; j++ {
+			g.EmbeddingGrads.Set(i, j, g.EmbeddingGrads.Get(i, j)+other.EmbeddingGrads.Get(i, j))
+		}
+	}
+
+	// Add output layer gradients
+	for i := 0; i < g.OutputLayerGrads.Rows && i < other.OutputLayerGrads.Rows; i++ {
+		for j := 0; j < g.OutputLayerGrads.Cols && j < other.OutputLayerGrads.Cols; j++ {
+			g.OutputLayerGrads.Set(i, j, g.OutputLayerGrads.Get(i, j)+other.OutputLayerGrads.Get(i, j))
+		}
+	}
+
+	// Add attention gradients for each layer
+	for layer := 0; layer < len(g.AttentionGrads) && layer < len(other.AttentionGrads); layer++ {
+		if g.AttentionGrads[layer] != nil && other.AttentionGrads[layer] != nil {
+			g.addMatrix(g.AttentionGrads[layer].WQueryGrads, other.AttentionGrads[layer].WQueryGrads)
+			g.addMatrix(g.AttentionGrads[layer].WKeyGrads, other.AttentionGrads[layer].WKeyGrads)
+			g.addMatrix(g.AttentionGrads[layer].WValueGrads, other.AttentionGrads[layer].WValueGrads)
+			g.addMatrix(g.AttentionGrads[layer].WOutputGrads, other.AttentionGrads[layer].WOutputGrads)
+		}
+	}
+
+	// Add feed-forward gradients for each layer
+	for layer := 0; layer < len(g.FFGrads) && layer < len(other.FFGrads); layer++ {
+		if g.FFGrads[layer] != nil && other.FFGrads[layer] != nil {
+			g.addMatrix(g.FFGrads[layer].W1Grads, other.FFGrads[layer].W1Grads)
+			g.addMatrix(g.FFGrads[layer].W2Grads, other.FFGrads[layer].W2Grads)
+			g.addMatrix(g.FFGrads[layer].B1Grads, other.FFGrads[layer].B1Grads)
+			g.addMatrix(g.FFGrads[layer].B2Grads, other.FFGrads[layer].B2Grads)
+		}
+	}
+
+	// Add layer norm gradients
+	for layer := 0; layer < len(g.LayerNorm1Grads) && layer < len(other.LayerNorm1Grads); layer++ {
+		if g.LayerNorm1Grads[layer] != nil && other.LayerNorm1Grads[layer] != nil {
+			g.addMatrix(g.LayerNorm1Grads[layer].GammaGrads, other.LayerNorm1Grads[layer].GammaGrads)
+			g.addMatrix(g.LayerNorm1Grads[layer].BetaGrads, other.LayerNorm1Grads[layer].BetaGrads)
+		}
+	}
+
+	for layer := 0; layer < len(g.LayerNorm2Grads) && layer < len(other.LayerNorm2Grads); layer++ {
+		if g.LayerNorm2Grads[layer] != nil && other.LayerNorm2Grads[layer] != nil {
+			g.addMatrix(g.LayerNorm2Grads[layer].GammaGrads, other.LayerNorm2Grads[layer].GammaGrads)
+			g.addMatrix(g.LayerNorm2Grads[layer].BetaGrads, other.LayerNorm2Grads[layer].BetaGrads)
+		}
+	}
+
+	// Add final layer norm gradients
+	if g.FinalLayerNormGrads != nil && other.FinalLayerNormGrads != nil {
+		g.addMatrix(g.FinalLayerNormGrads.GammaGrads, other.FinalLayerNormGrads.GammaGrads)
+		g.addMatrix(g.FinalLayerNormGrads.BetaGrads, other.FinalLayerNormGrads.BetaGrads)
+	}
+}
+
+// addMatrix adds values from source matrix to destination matrix
+func (g *Gradients) addMatrix(dest, src *matrix.Matrix) {
+	if dest == nil || src == nil {
+		return
+	}
+
+	for i := 0; i < dest.Rows && i < src.Rows; i++ {
+		for j := 0; j < dest.Cols && j < src.Cols; j++ {
+			dest.Set(i, j, dest.Get(i, j)+src.Get(i, j))
+		}
+	}
+}

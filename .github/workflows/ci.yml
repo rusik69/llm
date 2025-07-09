@@ -67,7 +67,7 @@ jobs:
     - name: Test Wikipedia integration
       run: |
         # Test sample Wikipedia data processing
-        ./shittyllm -mode=download -sample=true -datadir=wiki_test -maxarticles=5
+        ./shittyllm -mode=download -sample=false -datadir=wiki_test -maxarticles=50
         
         # Verify training data was created
         if [ ! -f "wiki_test/training_data.txt" ]; then

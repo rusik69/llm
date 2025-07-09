@@ -5,7 +5,9 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/rusik69/shittyllm/pkg/llm"
 	"github.com/rusik69/shittyllm/pkg/tokenizer"
@@ -26,17 +28,19 @@ type TrainingConfig struct {
 	ValidationSplit float64 // Fraction of data to use for validation
 	WarmupSteps     int
 	UseWarmup       bool
+	NumWorkers      int // Number of parallel workers for training
 }
 
 // DefaultTrainingConfig returns default training configuration
 func DefaultTrainingConfig() *TrainingConfig {
 	return &TrainingConfig{
 		LearningRate:    0.001,
-		BatchSize:       16,
+		BatchSize:       64, // Increased for better parallel processing
 		MaxGradNorm:     1.0,
-		ValidationSplit: 0.1,
-		WarmupSteps:     1000,
-		UseWarmup:       false, // Disable warmup for debugging
+		ValidationSplit: 0.0,              // Disable validation for speed
+		WarmupSteps:     100,              // Reduced warmup steps
+		UseWarmup:       false,            // Disable warmup for debugging
+		NumWorkers:      runtime.NumCPU(), // Use all available CPU cores
 	}
 }
 
@@ -79,18 +83,42 @@ func (t *Trainer) Train(tokens []int, epochs int) error {
 
 	fmt.Printf("Starting training with %d tokens for %d epochs\n", len(tokens), epochs)
 	fmt.Printf("Using Adam optimizer with learning rate: %.6f\n", t.Config.LearningRate)
+	fmt.Printf("Training configuration: %d workers, batch size %d\n", t.Config.NumWorkers, t.Config.BatchSize)
 
 	// Set model to training mode
 	t.Model.Train()
 
-	// Configure training parameters for efficiency
-	maxSequenceLength := 20
-	samplesPerEpoch := min(len(tokens)/10, 10000) // Sample at most 10k examples per epoch
-	batchSize := t.Config.BatchSize
+	// Configure training parameters for maximum speed
+	maxSequenceLength := 10                      // Reduced from 20 for faster processing
+	samplesPerEpoch := min(len(tokens)/20, 1000) // Further reduced for lightning speed
+	// Ensure batch size is large enough for parallel processing by default
+	minParallelBatch := t.Config.NumWorkers * 4                     // 4 examples per worker
+	batchSize := max(min(t.Config.BatchSize, 32), minParallelBatch) // Larger batches for parallel processing
+
+	// Fast mode for moderate learning rates
+	if t.Config.LearningRate >= 0.03 {
+		maxSequenceLength = 8                      // Shorter sequences
+		samplesPerEpoch = min(len(tokens)/30, 800) // Fewer samples
+		// Ensure batch size is large enough for parallel processing
+		minParallelBatch := t.Config.NumWorkers * 4                    // 4 examples per worker (reduced from 8)
+		batchSize = max(min(t.Config.BatchSize, 64), minParallelBatch) // Larger batches for parallel processing
+		fmt.Printf("🚀 FAST MODE: Optimized parallel training activated\n")
+	}
+
+	// Ultra-fast mode for very high learning rates
+	if t.Config.LearningRate >= 0.05 {
+		maxSequenceLength = 5                      // Even shorter sequences
+		samplesPerEpoch = min(len(tokens)/50, 500) // Minimal samples
+		// Ensure batch size is large enough for parallel processing even in lightning mode
+		minParallelBatch := t.Config.NumWorkers * 4                    // 4 examples per worker
+		batchSize = max(min(t.Config.BatchSize, 32), minParallelBatch) // Larger batches for parallel processing
+		fmt.Printf("⚡ LIGHTNING MODE: Ultra-fast training activated\n")
+	}
 
 	fmt.Printf("Training with %d samples per epoch, batch size %d\n", samplesPerEpoch, batchSize)
 
 	for epoch := 0; epoch < epochs; epoch++ {
+		fmt.Printf("Starting epoch %d/%d...\n", epoch+1, epochs)
 		totalLoss := 0.0
 		numBatches := 0
 		processed := 0
@@ -100,13 +128,23 @@ func (t *Trainer) Train(tokens []int, epochs int) error {
 			batchEnd := min(batchStart+batchSize, samplesPerEpoch)
 			currentBatchSize := batchEnd - batchStart
 
-			var batchInputs [][]int
-			var batchTargets [][]int
+			// Debug: Show first batch
+			if batchStart == 0 {
+				fmt.Printf("Processing first batch (size: %d)...\n", currentBatchSize)
+			}
+
+			// Pre-allocate batch slices for better memory efficiency
+			batchInputs := make([][]int, 0, currentBatchSize)
+			batchTargets := make([][]int, 0, currentBatchSize)
 
 			// Create batch of training examples
 			for i := 0; i < currentBatchSize; i++ {
 				// Sample random position from tokens (more efficient than sequential)
-				randomPos := rand.Intn(len(tokens) - maxSequenceLength - 1)
+				maxPos := len(tokens) - 2 // Need at least 2 tokens (input + target)
+				if maxPos < 0 {
+					maxPos = 0
+				}
+				randomPos := rand.Intn(maxPos + 1)
 
 				// Create input sequence
 				seqLen := min(maxSequenceLength, randomPos+1)
@@ -127,11 +165,7 @@ func (t *Trainer) Train(tokens []int, epochs int) error {
 			numBatches++
 			processed += currentBatchSize
 
-			// Debug: Check optimizer state
-			if numBatches == 1 {
-				fmt.Printf("First batch - Step: %d, Config LR: %.6f, Effective LR: %.6f\n",
-					t.Optimizer.State.Step, t.Optimizer.Config.LearningRate, t.Optimizer.GetLearningRate())
-			}
+			// Skip debug output for speed
 
 			// Apply learning rate warmup if enabled
 			if t.Config.UseWarmup && t.Optimizer.State.Step < int64(t.Config.WarmupSteps) {
@@ -139,17 +173,16 @@ func (t *Trainer) Train(tokens []int, epochs int) error {
 				t.Optimizer.SetLearningRate(warmupLR)
 			}
 
-			// Progress indicator
-			if numBatches%10 == 0 || batchStart+batchSize >= samplesPerEpoch {
+			// Progress indicator (more frequent for visibility)
+			if numBatches%20 == 0 || batchStart+batchSize >= samplesPerEpoch {
 				progress := float64(processed) / float64(samplesPerEpoch) * 100
-				fmt.Printf("\rEpoch %d: %.1f%% complete, Current Loss: %.4f, LR: %.6f",
-					epoch+1, progress, batchLoss, t.Optimizer.GetLearningRate())
+				fmt.Printf("\rEpoch %d: %.0f%% complete, Loss: %.3f, Batches: %d",
+					epoch+1, progress, batchLoss, numBatches)
 			}
 		}
 
 		avgLoss := totalLoss / float64(numBatches)
-		currentLR := t.Optimizer.GetLearningRate()
-		fmt.Printf("\nEpoch %d: Average Loss = %.4f, Learning Rate = %.6f\n", epoch+1, avgLoss, currentLR)
+		fmt.Printf("\nEpoch %d: Loss = %.3f\n", epoch+1, avgLoss)
 	}
 
 	// Set model to evaluation mode
@@ -166,6 +199,14 @@ func min(a, b int) int {
 	return b
 }
 
+// max returns the maximum of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // TrainBatch performs training on a batch of sequences with proper backpropagation
 func (t *Trainer) TrainBatch(inputs [][]int, targets [][]int) float64 {
 	if len(inputs) != len(targets) {
@@ -177,20 +218,28 @@ func (t *Trainer) TrainBatch(inputs [][]int, targets [][]int) float64 {
 	// Set model to training mode
 	t.Model.Train()
 
-	// Process each example in the batch
-	for i := 0; i < len(inputs); i++ {
-		// Debug: Check training data
-		if i == 0 {
-			fmt.Printf("Sample input: %v, target: %v\n", inputs[i], targets[i])
+	// Use parallel processing only if we have enough examples per worker (minimum 4 examples per worker)
+	minExamplesPerWorker := 4
+	if t.Config.NumWorkers > 1 && len(inputs) >= (t.Config.NumWorkers*minExamplesPerWorker) {
+		// Debug: Show that we're using parallel processing
+		if t.Optimizer.State.Step <= 1 {
+			fmt.Printf("Using parallel processing with %d workers for batch size %d\n", t.Config.NumWorkers, len(inputs))
 		}
+		return t.trainBatchParallel(inputs, targets)
+	}
 
-		// Compute loss
+	// Sequential processing for small batches
+	if t.Optimizer.State.Step <= 1 {
+		fmt.Printf("Using sequential processing for batch size %d\n", len(inputs))
+	}
+	for i := 0; i < len(inputs); i++ {
+		// Compute loss (no debug output for speed)
 		loss := t.Model.ComputeLoss(inputs[i], targets[i])
 		totalLoss += loss
 
-		// Debug: Check loss values
-		if i == 0 {
-			fmt.Printf("Sample loss: %.6f\n", loss)
+		// Show progress for every 10th example in first batch (unless in lightning mode)
+		if t.Optimizer.State.Step <= 1 && i%10 == 0 && t.Config.LearningRate < 0.05 {
+			fmt.Printf("  Processing example %d/%d...\n", i+1, len(inputs))
 		}
 
 		// Compute gradients
@@ -203,6 +252,108 @@ func (t *Trainer) TrainBatch(inputs [][]int, targets [][]int) float64 {
 
 		// Update parameters
 		t.Optimizer.Step(t.Model, gradients)
+	}
+
+	return totalLoss / float64(len(inputs))
+}
+
+// trainBatchParallel performs parallel training on a batch of sequences
+func (t *Trainer) trainBatchParallel(inputs [][]int, targets [][]int) float64 {
+	numWorkers := t.Config.NumWorkers
+	batchSize := len(inputs)
+	chunkSize := batchSize / numWorkers
+
+	// Debug: Show parallel setup
+	if t.Optimizer.State.Step <= 1 {
+		fmt.Printf("Parallel setup: %d examples, %d workers, chunk size %d\n", batchSize, numWorkers, chunkSize)
+	}
+
+	// Channels for collecting results
+	type result struct {
+		loss      float64
+		gradients *llm.Gradients
+	}
+
+	results := make(chan result, numWorkers)
+	var wg sync.WaitGroup
+
+	// Process chunks in parallel
+	for worker := 0; worker < numWorkers; worker++ {
+		start := worker * chunkSize
+		end := start + chunkSize
+		if worker == numWorkers-1 {
+			end = batchSize // Last worker handles remainder
+		}
+
+		wg.Add(1)
+		go func(startIdx, endIdx int) {
+			defer wg.Done()
+
+			chunkLoss := 0.0
+			var combinedGradients *llm.Gradients
+
+			for i := startIdx; i < endIdx; i++ {
+				// Compute loss (no debug output for speed)
+				loss := t.Model.ComputeLoss(inputs[i], targets[i])
+				chunkLoss += loss
+
+				// Compute gradients
+				gradients := t.Model.ComputeGradients(inputs[i], targets[i])
+
+				// Accumulate gradients
+				if combinedGradients == nil {
+					combinedGradients = gradients
+				} else {
+					combinedGradients.Add(gradients)
+				}
+			}
+
+			// Average gradients for this chunk
+			if combinedGradients != nil {
+				combinedGradients.Scale(1.0 / float64(endIdx-startIdx))
+			}
+
+			results <- result{
+				loss:      chunkLoss,
+				gradients: combinedGradients,
+			}
+		}(start, end)
+	}
+
+	// Wait for all workers to finish
+	wg.Wait()
+	close(results)
+
+	// Debug: Show completion
+	if t.Optimizer.State.Step <= 1 {
+		fmt.Printf("All workers completed, collecting results...\n")
+	}
+
+	// Collect and combine results
+	totalLoss := 0.0
+	var finalGradients *llm.Gradients
+
+	for res := range results {
+		totalLoss += res.loss
+
+		if finalGradients == nil {
+			finalGradients = res.gradients
+		} else if res.gradients != nil {
+			finalGradients.Add(res.gradients)
+		}
+	}
+
+	// Average gradients across all workers
+	if finalGradients != nil {
+		finalGradients.Scale(1.0 / float64(numWorkers))
+
+		// Apply gradient clipping
+		if t.Config.MaxGradNorm > 0 {
+			finalGradients.ClipGradients(t.Config.MaxGradNorm)
+		}
+
+		// Update parameters with combined gradients
+		t.Optimizer.Step(t.Model, finalGradients)
 	}
 
 	return totalLoss / float64(len(inputs))

@@ -95,6 +95,24 @@ generate: build
 	@echo "Generating text..."
 	./$(BINARY_NAME) -mode=generate -text="$(or $(TEXT),Hello world)" -temperature=0.8 -maxtokens=50
 
+# Download Wikipedia data
+.PHONY: download-wiki
+download-wiki: build
+	@echo "Downloading Wikipedia data..."
+	./$(BINARY_NAME) -mode=download -sample=false -datadir=data -maxarticles=100000
+
+# Fast parallel training with Wikipedia data (uses all CPU cores)
+.PHONY: train-wiki-parallel
+train-wiki-parallel: build
+	@echo "🚀 Fast parallel training with Wikipedia data (using all CPU cores)..."
+	@echo "System CPU count: $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 'unknown')"
+	@if [ ! -f data/training_data.txt ]; then \
+		echo "Training data not found. Downloading..."; \
+		make download-wiki > /dev/null 2>&1; \
+	fi
+	@echo "Starting fast parallel training..."
+	./$(BINARY_NAME) -mode=train -data=data/training_data.txt -epochs=5 -lr=0.01
+
 # Show help
 .PHONY: help
 help:
@@ -111,7 +129,12 @@ help:
 	@echo "  tidy           - Tidy dependencies"
 	@echo "  train          - Train the model"
 	@echo "  generate       - Generate text (TEXT='prompt')"
+	@echo "  download-wiki  - Download Wikipedia data (up to 100K articles)"
+	@echo "  train-wiki-parallel - 🚀 Fast parallel training using all CPU cores (2 epochs, LR=0.03)"
 	@echo "  help           - Show this help message"
+	@echo ""
+	@echo "System info:"
+	@echo "  CPU cores: $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 'unknown')"
 
 # Default goal
 .DEFAULT_GOAL := help 
